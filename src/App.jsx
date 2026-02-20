@@ -219,12 +219,13 @@ export default function App() {
 
   const [initial, setInitial] = useState(savedState?.initial ?? 100000);
   const [annualReturn, setAnnualReturn] = useState(savedState?.annualReturn ?? 8);
+  const [inflation, setInflation] = useState(savedState?.inflation ?? 2.5); // NOVÉ: INFLACE
   const [mgmtFee, setMgmtFee] = useState(savedState?.mgmtFee ?? 0.5);
-  const [perfFee, setPerfFee] = useState(savedState?.perfFee ?? 0); // Změněn výchozí na 0% (ETF standard)
+  const [perfFee, setPerfFee] = useState(savedState?.perfFee ?? 0); 
   const [useHwm, setUseHwm] = useState(savedState?.useHwm ?? true);
   const [applyTax, setApplyTax] = useState(savedState?.applyTax ?? true);
   const [taxRate, setTaxRate] = useState(savedState?.taxRate ?? 15);
-  const [timeTest, setTimeTest] = useState(savedState?.timeTest ?? true); // Změněno na výchozí ZAPNUTO
+  const [timeTest, setTimeTest] = useState(savedState?.timeTest ?? true); 
   const [phases, setPhases] = useState(savedState?.phases ?? defaultPhases);
   const [chartMode, setChartMode] = useState("value");
 
@@ -239,9 +240,9 @@ export default function App() {
 
   /* ── AUTO-SAVE ── */
   useEffect(() => {
-    const stateToSave = { income, exp, initial, annualReturn, mgmtFee, perfFee, useHwm, applyTax, taxRate, timeTest, phases };
+    const stateToSave = { income, exp, initial, annualReturn, inflation, mgmtFee, perfFee, useHwm, applyTax, taxRate, timeTest, phases };
     localStorage.setItem("finPlannerData", JSON.stringify(stateToSave));
-  }, [income, exp, initial, annualReturn, mgmtFee, perfFee, useHwm, applyTax, taxRate, timeTest, phases]);
+  }, [income, exp, initial, annualReturn, inflation, mgmtFee, perfFee, useHwm, applyTax, taxRate, timeTest, phases]);
 
   const clearMemory = () => {
     if (window.confirm("Opravdu chceš vymazat všechna zadaná data a uvést aplikaci do výchozího stavu?")) {
@@ -255,7 +256,11 @@ export default function App() {
     const mr = annualReturn / 100 / 12, mf = mgmtFee / 100 / 12, netMr = mr - mf;
     let port = initial, portGross = initial, portNoPerf = initial, totalIn = initial, totalOut = 0, hwm = initial;
     let annualStart = initial, annualStartGross = initial, annualStartNoPerf = initial;
-    const rows = [{ year: 0, value: port, gross: portGross, noPerf: portNoPerf, invested: totalIn, netInvested: totalIn, gains: 0, afterTax: port, out: 0, annualGain: 0, annualFlow: 0 }];
+    const rows = [{ 
+      year: 0, value: port, gross: portGross, noPerf: portNoPerf, 
+      invested: totalIn, netInvested: totalIn, gains: 0, afterTax: port, out: 0, 
+      annualGain: 0, annualFlow: 0, realValue: port 
+    }];
 
     for (let m = 1; m <= totalYears * 12; m++) {
       const yr = m / 12, yc = Math.ceil(yr);
@@ -283,14 +288,35 @@ export default function App() {
         const gains = Math.max(0, port - netInv);
         const taxable = Math.max(0, port - totalIn);
         const afterTax = applyTax && !timeTest ? port - taxable * taxRate / 100 : port;
-        rows.push({ year: m / 12, value: Math.max(0, Math.round(port)), gross: Math.max(0, Math.round(portGross)), noPerf: Math.max(0, Math.round(portNoPerf)), invested: Math.round(totalIn), netInvested: Math.round(netInv), gains: Math.round(gains), afterTax: Math.round(afterTax), out: Math.round(totalOut), annualFlow: withdraw ? -mo : mo });
+        
+        // Přepočet na kupní sílu dnešních peněz (odstranění inflace)
+        const inflationFactor = Math.pow(1 + inflation / 100, yr);
+        const realVal = port / inflationFactor;
+
+        rows.push({ 
+          year: yr, value: Math.max(0, Math.round(port)), gross: Math.max(0, Math.round(portGross)), 
+          noPerf: Math.max(0, Math.round(portNoPerf)), invested: Math.round(totalIn), netInvested: Math.round(netInv), 
+          gains: Math.round(gains), afterTax: Math.round(afterTax), out: Math.round(totalOut), 
+          annualFlow: withdraw ? -mo : mo,
+          realValue: Math.max(0, Math.round(realVal)) // NOVÉ: Hodnota v dnešních penězích pro graf
+        });
       }
     }
     const fin = rows[rows.length - 1];
     const taxable = Math.max(0, fin.value - fin.invested);
     const taxPaid = applyTax && !timeTest ? taxable * taxRate / 100 : 0;
-    return { chartData: rows, summary: { finalValue: fin.value, afterTax: fin.afterTax, totalIn: fin.invested, totalOut: fin.out, gains: fin.gains, feesCost: Math.round(fin.gross - fin.value), taxPaid: Math.round(taxPaid), years: totalYears } };
-  }, [initial, annualReturn, mgmtFee, perfFee, useHwm, applyTax, taxRate, timeTest, phases, totalYears]);
+    const finalRealValue = fin.value / Math.pow(1 + inflation / 100, totalYears);
+
+    return { 
+      chartData: rows, 
+      summary: { 
+        finalValue: fin.value, afterTax: fin.afterTax, totalIn: fin.invested, totalOut: fin.out, 
+        gains: fin.gains, feesCost: Math.round(fin.gross - fin.value), taxPaid: Math.round(taxPaid), 
+        years: totalYears,
+        realValue: Math.round(finalRealValue) // NOVÉ: Finální kupní síla pro summary karty
+      } 
+    };
+  }, [initial, annualReturn, inflation, mgmtFee, perfFee, useHwm, applyTax, taxRate, timeTest, phases, totalYears]);
 
   /* ─── RENDER ─────────────────────────────────────────────────── */
   return (
@@ -398,6 +424,9 @@ export default function App() {
                 <SectionHead label="Základní nastavení" icon="◆" />
                 <Slider label="Počáteční vklad" value={initial} onChange={setInitial} min={0} max={2000000} step={5000} fmt={v => czk(v)} color={T.teal} />
                 <Slider label="Roční výnos (brutto)" value={annualReturn} onChange={setAnnualReturn} min={0} max={30} step={0.5} fmt={v => `${v} %`} color={T.gold} />
+                {/* NOVÉ POSUVNÍK PRO INFLACI */}
+                <Slider label="Očekávaná inflace (p.a.)" value={inflation} onChange={setInflation} min={0} max={15} step={0.1} fmt={v => `${v} %`} color={T.amber} 
+                  hint="Určuje, jak rychle ztrácejí peníze hodnotu." />
               </div>
 
               <div style={{ marginBottom: 22 }}>
@@ -450,7 +479,7 @@ export default function App() {
                 )}
               </div>
 
-              {/* NAVRÁCENÝ DOPAD POPLATKŮ */}
+              {/* DOPAD POPLATKŮ VLEVO DOLE */}
               <div style={{ background: `${T.rose}12`, border: `1px solid ${T.rose}30`, borderRadius: 8, padding: "12px 14px", marginTop: 10 }}>
                 <div style={{ fontSize: 11, color: T.rose, fontWeight: 800, marginBottom: 4 }}>⚠ DOPAD POPLATKŮ</div>
                 <div style={{ fontSize: 12, color: T.muted, lineHeight: 1.5 }}>
@@ -462,7 +491,8 @@ export default function App() {
 
             <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: isMobile ? "16px 12px" : "22px 24px", overflow: isMobile ? "visible" : "auto", gap: 16, boxSizing: "border-box" }}>
               <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)", gap: 12 }}>
-                <StatCard icon="◈" label="Portfolio" value={czk(summary.finalValue)} color={T.gold} sub={`Výnos ${annualReturn}% p.a.`} />
+                {/* UPRAVENÁ PRVNÍ KARTA: Nyní ukazuje kupní sílu jako sub-text */}
+                <StatCard icon="◈" label="Portfolio (Nominál)" value={czk(summary.finalValue)} color={T.gold} sub={`Kupní síla: ${czk(summary.realValue)}`} />
                 <StatCard icon="✦" label="Po zdanění" value={czk(summary.afterTax)} color={T.teal} sub={applyTax && !timeTest ? `Daň: ${czk(summary.taxPaid)}` : "Osvobozeno"} />
                 <StatCard icon="▲" label="Vloženo" value={czk(summary.totalIn)} color={T.violet} sub={summary.totalOut > 0 ? `Vybráno: ${czk(summary.totalOut)}` : "Bez výběrů"} />
                 <StatCard icon="◉" label="Čistý zisk" value={czk(summary.gains)} color={T.amber} sub={`Poplatky: ${czk(summary.feesCost)}`} />
@@ -486,6 +516,10 @@ export default function App() {
                       <Legend wrapperStyle={{ fontSize: 11, color: T.muted, paddingTop: 8 }} />
                       <Area dataKey="invested" name="Vloženo" stroke={T.violet} fill="url(#ig)" strokeWidth={2} dot={false} />
                       <Area dataKey="value" name="Hodnota" stroke={T.gold} fill="url(#vg)" strokeWidth={2.5} dot={false} />
+                      
+                      {/* NOVÁ PŘERUŠOVANÁ ČÁRA PRO KUPNÍ SÍLU */}
+                      <Area dataKey="realValue" name="Kupní síla (dnešní hodnota)" stroke={T.amber} fill="none" strokeWidth={2} strokeDasharray="5 5" dot={false} />
+                      
                       {applyTax && !timeTest && <Area dataKey="afterTax" name="Po zdanění" stroke={T.teal} fill="url(#tg)" strokeWidth={2} strokeDasharray="6 3" dot={false} />}
                     </AreaChart>
                   ) : chartMode === "compare" ? (
